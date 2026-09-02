@@ -127,8 +127,10 @@ if [[ "$OWNER_USER" != "root" ]]; then
   usermod -aG docker "$OWNER_USER" || true
 fi
 
+set -a
 # shellcheck disable=SC1091
-set -a; source .env; set +a
+source .env
+set +a
 HF_CACHE_PATH="${HF_CACHE_DIR:-/var/lib/glm53/huggingface}"
 VLLM_CACHE_PATH="${VLLM_CACHE_DIR:-/var/lib/glm53/vllm-cache}"
 mkdir -p "$HF_CACHE_PATH" "$VLLM_CACHE_PATH"
@@ -146,7 +148,7 @@ log "Validando CUDA/vLLM/FlashInfer com a própria imagem de inferência..."
 docker run --rm --gpus all \
   --entrypoint python3 \
   "${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}" \
-  -c "import sys, torch, vllm; from importlib.metadata import version; n=torch.cuda.device_count(); fi=version('flashinfer-python'); nums=tuple(int(x) for x in fi.split('+')[0].split('.')[:3]); print(f'vLLM {vllm.__version__}; FlashInfer {fi}; CUDA OK: {n} GPU(s); {torch.cuda.get_device_name(0) if n else \"none\"}'); sys.exit(0 if n >= ${TENSOR_PARALLEL_SIZE:-8} and nums >= (0,6,17) else 1)"
+  -c "import sys, torch, vllm; from importlib.metadata import version; from packaging.version import Version; n=torch.cuda.device_count(); fi=version('flashinfer-python'); print(f'vLLM {vllm.__version__}; FlashInfer {fi}; CUDA OK: {n} GPU(s); {torch.cuda.get_device_name(0) if n else \"none\"}'); sys.exit(0 if n >= ${TENSOR_PARALLEL_SIZE:-8} and Version(fi) >= Version('0.6.17') else 1)"
 
 log "Subindo GLM-5.3-Flash..."
 docker compose --env-file .env up -d
