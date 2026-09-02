@@ -49,10 +49,10 @@ Quando estiver pronto:
 
 ## API
 
-Base URL:
+Base URL padrão no host:
 
 ```text
-http://IP_DA_VM:8000/v1
+http://127.0.0.1:8000/v1
 ```
 
 Veja a chave:
@@ -67,7 +67,7 @@ Exemplo com Python/OpenAI:
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://IP_DA_VM:8000/v1",
+    base_url="http://127.0.0.1:8000/v1",
     api_key="SUA_CHAVE",
 )
 
@@ -86,7 +86,7 @@ print(response.choices[0].message.content)
 
 O vLLM tem endpoints que não são protegidos apenas por `--api-key`. Por isso o container vLLM **não publica porta diretamente no host**. O Nginx é o único serviço exposto e encaminha somente `/v1/`; outros caminhos, incluindo `/invocations`, recebem 404.
 
-No Azure NSG, mantenha SSH limitado ao seu IP e, se possível, limite a porta 8000 aos IPs dos seus servidores/agentes. Não faça commit do arquivo `.env`.
+Por padrão, `BIND_ADDRESS=127.0.0.1`, portanto a API não fica pública. Para agentes remotos, use uma rede privada/VNet/VPN ou altere para `0.0.0.0` somente depois de limitar a porta 8000 no Azure NSG aos IPs confiáveis. Se atravessar internet pública, coloque TLS na frente da API. Não faça commit do arquivo `.env`. Veja `SECURITY.md`.
 
 ## Armazenamento e Azure Spot
 
@@ -121,7 +121,8 @@ Copie/edite `.env` conforme necessário. Os principais valores são:
 - `SERVED_MODEL_NAME`: nome usado pelos clientes OpenAI.
 - `TENSOR_PARALLEL_SIZE`: 8 no perfil H200 oficial.
 - `MAX_MODEL_LEN`: 262144 por padrão; aumente somente após validar estabilidade no seu workload.
-- `API_PORT`: porta pública do gateway.
+- `API_PORT`: porta do gateway.
+- `BIND_ADDRESS`: `127.0.0.1` por padrão; não use `0.0.0.0` sem proteção de rede/TLS.
 - `HF_CACHE_DIR`: local persistente do cache/pesos.
 - `API_KEY`: segredo de autenticação.
 - `HF_TOKEN`: opcional para Hugging Face.

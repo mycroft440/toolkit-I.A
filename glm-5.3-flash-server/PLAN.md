@@ -10,7 +10,7 @@ Entregar somente o servidor de inferência do `zai-org/GLM-5.3-Flash`, acessíve
 - **Modelo padrão:** `zai-org/GLM-5.3-Flash` FP8 (320B total / 18B ativos).
 - **Hardware de referência:** Azure `Standard_ND96isr_H200_v5`, 8× H200 141 GB, TP=8.
 - **Imagem da VM:** Azure Ubuntu HPC, para reduzir instalação manual de driver/CUDA/NCCL.
-- **API:** compatível com OpenAI em `/v1`.
+- **API:** compatível com OpenAI em `/v1`; bind local por padrão.
 - **Segurança:** vLLM usa API key; Nginx publica somente `/v1` e bloqueia endpoints não autenticados como `/invocations`.
 - **Persistência:** cache Hugging Face em diretório configurável; recomendado usar armazenamento persistente com >= 420 GiB livres.
 - **Recuperação:** containers com `restart: unless-stopped`; Docker habilitado no boot.

@@ -116,11 +116,11 @@ Comandos úteis:
   ./manage.sh wait
   ./test-api.sh
 
-Endpoint externo:
-  http://IP_DA_VM:${API_PORT:-8000}/v1
+Endpoint no host:
+  http://${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}/v1
 
 API key:
   $(grep '^API_KEY=' .env | cut -d= -f2-)
 
-Importante: no Azure NSG, restrinja a porta ${API_PORT:-8000} aos IPs dos seus agentes sempre que possível.
+Por segurança, o padrão escuta apenas em 127.0.0.1. Para agentes remotos, leia SECURITY.md antes de alterar BIND_ADDRESS.
 MSG

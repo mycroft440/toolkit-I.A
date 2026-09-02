@@ -43,7 +43,7 @@ services:
     depends_on:
       - vllm
     ports:
-      - "${BIND_ADDRESS:-0.0.0.0}:${API_PORT:-8000}:8000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
       - ./config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
