@@ -20,6 +20,9 @@ MAX_LEN="${MAX_MODEL_LEN:-262144}"
 API_LISTEN_PORT="${API_PORT:-8000}"
 READY_TIMEOUT="${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
 
+# MAX_LEN e READY_TIMEOUT são lidos indiretamente por nome no loop abaixo.
+# shellcheck disable=SC2034
+: "$MAX_LEN" "$READY_TIMEOUT"
 for value_name in TP_SIZE EXPECTED_GPUS MIN_GPU_MEMORY_MIB MIN_HF_FREE_GIB MIN_DOCKER_FREE_GIB MIN_VLLM_CACHE_FREE_GIB MAX_LEN API_LISTEN_PORT READY_TIMEOUT; do
   value="${!value_name}"
   [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "${value_name} deve ser inteiro positivo; recebido: ${value}."
@@ -94,4 +97,4 @@ done
 
 DRIVER_VERSION="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n1 | tr -d ' ')"
 GPU_SUMMARY="$(printf '%s\n' "${GPU_NAME[@]:0:EXPECTED_GPUS}" | sort -u | paste -sd ';' -)"
-log "Pré-validação OK: ${EXPECTED_GPUS}/${GPU_COUNT} GPUs usadas (${GPU_SUMMARY}); driver ${DRIVER_VERSION}; >=${MIN_GPU_MEMORY_MIB} MiB/GPU."
+log "Pré-validação OK: ${EXPECTED_GPUS}/${GPU_COUNT} GPUs validadas (${GPU_SUMMARY}); TP=${TP_SIZE}; driver ${DRIVER_VERSION}; >=${MIN_GPU_MEMORY_MIB} MiB/GPU."
