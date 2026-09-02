@@ -16,8 +16,9 @@ case "${1:-status}" in
   stop)
     docker compose --env-file .env stop
     ;;
-  restart)
-    docker compose --env-file .env restart
+  restart|apply)
+    # "docker compose restart" não reaplica .env/ports/command.
+    docker compose --env-file .env up -d --force-recreate
     ;;
   status)
     docker compose --env-file .env ps
@@ -28,15 +29,15 @@ case "${1:-status}" in
     ;;
   pull|update)
     docker compose --env-file .env pull
-    docker compose --env-file .env up -d
+    docker compose --env-file .env up -d --force-recreate
     ;;
   wait)
     timeout_sec="${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
     deadline=$((SECONDS + timeout_sec))
     log "Aguardando a API ficar pronta (limite configurado: ${timeout_sec}s)..."
     while (( SECONDS < deadline )); do
-      if "$ROOT_DIR/healthcheck.sh" >/dev/null 2>&1; then
-        "$ROOT_DIR/healthcheck.sh"
+      if output="$("$ROOT_DIR/healthcheck.sh" 2>&1)"; then
+        printf '%s\n' "$output"
         exit 0
       fi
       sleep 10
@@ -51,7 +52,7 @@ case "${1:-status}" in
     ;;
   *)
     cat <<USAGE
-Uso: ./manage.sh {start|stop|restart|status|logs|pull|update|wait|test|key}
+Uso: ./manage.sh {start|stop|restart|apply|status|logs|pull|update|wait|test|key}
 USAGE
     exit 2
     ;;

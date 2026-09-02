@@ -18,3 +18,22 @@ load_env() {
   source "$root/.env"
   set +a
 }
+
+api_origin() {
+  local host="${BIND_ADDRESS:-127.0.0.1}"
+  local port="${API_PORT:-8000}"
+
+  case "$host" in
+    0.0.0.0)
+      host="127.0.0.1"
+      ;;
+    "::")
+      host="[::1]"
+      ;;
+    *:*)
+      [[ "$host" == \[*\] ]] || host="[$host]"
+      ;;
+  esac
+
+  printf 'http://%s:%s\n' "$host" "$port"
+}
