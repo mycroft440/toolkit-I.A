@@ -33,6 +33,8 @@ Revisão do bootstrap Azure, Docker/Compose, runtime NVIDIA, vLLM, gateway, smok
 15. **Diagnóstico insuficiente:** `./manage.sh diagnose` mostra SO, GPUs, driver, Docker, digest da imagem e versões vLLM/FlashInfer sem mostrar segredos.
 16. **Preflight validava GPUs extras desnecessariamente:** agora só exige VRAM das GPUs efetivamente usadas pelo TP.
 17. **Versão crítica do FlashInfer não era conferida:** o bootstrap rejeita imagem abaixo de 0.6.17 e registra a versão usada.
+18. **Compatibilidade de históricos de agentes:** documentada a normalização de `assistant.content=null` + `tool_calls` para `content=""` enquanto o fix upstream #54368 ainda não estiver incorporado à imagem validada.
+19. **Flags antigas de thinking:** documentado que clientes GLM-5.3 devem usar `reasoning_effort`/`clear_thinking` e evitar `enable_thinking`/`thinking`, devido ao bug upstream #54744.
 
 ## Decisões mantidas
 
@@ -47,6 +49,12 @@ Revisão do bootstrap Azure, Docker/Compose, runtime NVIDIA, vLLM, gateway, smok
 A receita declara FlashInfer **0.6.17+** nos pré-requisitos, mas a seção de troubleshooting sugere conferir **0.6.18+** caso apareça erro de inicialização Sparse-MLA.
 
 Não vamos substituir preventivamente a imagem oficial. O instalador confirma >=0.6.17; se a H200 real apresentar o erro específico, `diagnose` registrará a versão e a atualização será feita de forma controlada.
+
+## Issues recentes triadas
+
+A busca final encontrou falhas em Ada/RTX 4090, RTX PRO 6000 SM120, B200, ROCm, KV offloading, MTP e DBO. Nosso perfil inicial H200/Hopper evita esses caminhos: não usa ROCm, KV offloading, MTP, DBO nem FP8-KV forçado. Não foi encontrado um bloqueador H200 equivalente nas issues pesquisadas.
+
+Há, porém, bugs de frontend/client que independem da GPU e importam para agentes; por isso `AGENT_COMPAT.md` faz parte do deployment.
 
 ## Reprodutibilidade
 
@@ -80,3 +88,6 @@ O risco principal restante é runtime real: o GLM-5.3-Flash/vLLM é recente e ai
 - https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nd-h200-v5-series
 - https://learn.microsoft.com/azure/virtual-machines/azure-hpc-vm-images
 - https://github.com/Azure/azhpc-images/releases
+- https://github.com/vllm-project/vllm/issues/54337
+- https://github.com/vllm-project/vllm/pull/54368
+- https://github.com/vllm-project/vllm/issues/54744

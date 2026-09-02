@@ -95,6 +95,10 @@ URLs remotas de imagens/vídeos/áudio também ficam **bloqueadas por padrão** 
 
 Para agentes remotos, prefira VNet/IP privado, VPN ou allowlist no NSG. Se a API atravessar internet pública, use TLS. Veja `SECURITY.md`.
 
+## Agentes e tool calling
+
+Para os agentes que você criará separadamente, leia `AGENT_COMPAT.md`. Enquanto um fix upstream ainda não estiver incorporado à imagem validada, histories com `assistant.content=null` + `tool_calls` devem ser normalizados para `content=""` antes de serem reenviados ao servidor. Use `reasoning_effort`/`clear_thinking`; não reutilize flags antigas como `enable_thinking=false`.
+
 ## Armazenamento e Azure Spot
 
 Pesos do modelo:
