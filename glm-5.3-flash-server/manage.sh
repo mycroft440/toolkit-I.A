@@ -4,10 +4,41 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
 load_env
-if ! docker info >/dev/null 2>&1 && [[ "${EUID}" -ne 0 ]]; then
-  exec sudo -E bash "$0" "$@"
-fi
 cd "$ROOT_DIR"
+
+require_docker_access() {
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "${EUID}" -ne 0 ]]; then
+    exec sudo -E bash "$0" "$@"
+  fi
+  die "Docker daemon não está acessível."
+}
+
+validate_deployment_config() {
+  "$ROOT_DIR/scripts/preflight.sh"
+  docker compose --env-file .env config >/dev/null
+}
+
+validate_runtime_image() {
+  docker run --rm --gpus all \
+    --entrypoint python3 \
+    "${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}" \
+    -c "import sys, torch, vllm; from importlib.metadata import version; from packaging.version import Version; n=torch.cuda.device_count(); fi=version('flashinfer-python'); print(f'vLLM {vllm.__version__}; FlashInfer {fi}; CUDA OK: {n} GPU(s); {torch.cuda.get_device_name(0) if n else \"none\"}'); sys.exit(0 if n >= ${TENSOR_PARALLEL_SIZE:-8} and Version(fi) >= Version('0.6.17') else 1)"
+}
+
+wait_for_api() {
+  local timeout_sec="${1:-${VLLM_ENGINE_READY_TIMEOUT_S:-3600}}"
+  local deadline=$((SECONDS + timeout_sec))
+  while (( SECONDS < deadline )); do
+    if "$ROOT_DIR/healthcheck.sh" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 10
+  done
+  return 1
+}
 
 diagnose() {
   printf '%s\n' "=== Sistema ==="
@@ -22,6 +53,7 @@ diagnose() {
   printf '\n%s\n' "=== Docker ==="
   docker --version || true
   docker compose version || true
+  docker info --format 'DockerRootDir={{.DockerRootDir}}' 2>/dev/null || true
 
   printf '\n%s\n' "=== Imagem vLLM ==="
   docker image inspect "${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}" \
@@ -47,8 +79,11 @@ show_info() {
   fi
 
   gpu_count="$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | wc -l | tr -d ' ' || true)"
-  gpu_names="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | sort -u | paste -sd ', ' - || true)"
-  host_ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  gpu_names="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | sort -u | paste -sd ',' - | sed 's/,/, /g' || true)"
+  host_ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' || true)"
+  if [[ -z "$host_ip" ]]; then
+    host_ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
 
   case "${BIND_ADDRESS:-127.0.0.1}" in
     127.0.0.1|localhost) remote_url="DESATIVADO (API somente local)" ;;
@@ -100,7 +135,7 @@ glm-info                 Mostrar este painel de qualquer pasta
 ./manage.sh test         Smoke test completo
 ./manage.sh diagnose     Diagnóstico técnico
 ./manage.sh restart      Reaplicar .env e recriar containers
-./manage.sh update       Atualizar imagens
+./manage.sh update       Atualizar com validação e rollback da imagem vLLM
 ./manage.sh key          Mostrar somente a API key
 ============================================================
 INFO
@@ -110,38 +145,89 @@ INFO
   fi
 }
 
+safe_update() {
+  local old_vllm_id="" timeout_sec
+  old_vllm_id="$(docker image inspect "${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}" --format '{{.Id}}' 2>/dev/null || true)"
+
+  log "Baixando imagens atualizadas..."
+  docker compose --env-file .env pull
+
+  log "Validando a nova imagem vLLM antes de substituir o servidor em execução..."
+  if ! validate_runtime_image; then
+    if [[ -n "$old_vllm_id" ]]; then
+      docker tag "$old_vllm_id" "${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}" || true
+    fi
+    die "A nova imagem falhou na validação CUDA/vLLM/FlashInfer. O servidor atual não foi recriado."
+  fi
+
+  validate_deployment_config
+  docker compose --env-file .env up -d --force-recreate
+
+  timeout_sec="${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
+  log "Aguardando a versão atualizada ficar saudável..."
+  if wait_for_api "$timeout_sec"; then
+    log "Atualização concluída e API saudável."
+    return 0
+  fi
+
+  if [[ -n "$old_vllm_id" ]]; then
+    warn "A atualização não ficou saudável; restaurando a imagem vLLM anterior."
+    docker tag "$old_vllm_id" "${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}" || true
+    docker compose --env-file .env up -d --force-recreate || true
+  fi
+  die "Atualização falhou. A imagem vLLM anterior foi restaurada quando disponível; execute ./manage.sh logs."
+}
+
 case "${1:-status}" in
-  start) docker compose --env-file .env up -d ;;
-  stop) docker compose --env-file .env stop ;;
+  start)
+    require_docker_access "$@"
+    validate_deployment_config
+    docker compose --env-file .env up -d
+    ;;
+  stop)
+    require_docker_access "$@"
+    docker compose --env-file .env stop
+    ;;
   restart|apply)
+    require_docker_access "$@"
+    validate_deployment_config
     docker compose --env-file .env up -d --force-recreate
     ;;
   status)
+    require_docker_access "$@"
     docker compose --env-file .env ps
     nvidia-smi --query-gpu=index,name,memory.total,memory.used,utilization.gpu --format=csv
     ;;
-  logs) docker compose --env-file .env logs -f --tail=200 vllm gateway ;;
+  logs)
+    require_docker_access "$@"
+    docker compose --env-file .env logs -f --tail=200 vllm gateway
+    ;;
   pull|update)
-    docker compose --env-file .env pull
-    docker compose --env-file .env up -d --force-recreate
+    require_docker_access "$@"
+    safe_update
     ;;
   wait)
     timeout_sec="${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
-    deadline=$((SECONDS + timeout_sec))
     log "Aguardando a API ficar pronta (limite configurado: ${timeout_sec}s)..."
-    while (( SECONDS < deadline )); do
-      if output="$("$ROOT_DIR/healthcheck.sh" 2>&1)"; then
-        printf '%s\n' "$output"
-        exit 0
-      fi
-      sleep 10
-    done
+    if wait_for_api "$timeout_sec"; then
+      "$ROOT_DIR/healthcheck.sh"
+      exit 0
+    fi
     die "A API não ficou pronta dentro do limite. Execute ./manage.sh logs para diagnosticar."
     ;;
-  test) "$ROOT_DIR/test-api.sh" ;;
-  diagnose) diagnose ;;
-  info) show_info ;;
-  key) printf '%s\n' "${API_KEY}" ;;
+  test)
+    "$ROOT_DIR/test-api.sh"
+    ;;
+  diagnose)
+    require_docker_access "$@"
+    diagnose
+    ;;
+  info)
+    show_info
+    ;;
+  key)
+    printf '%s\n' "${API_KEY}"
+    ;;
   *)
     cat <<USAGE
 Uso: ./manage.sh {start|stop|restart|apply|status|logs|pull|update|wait|test|diagnose|info|key}

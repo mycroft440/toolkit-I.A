@@ -26,6 +26,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
           shellcheck install.sh manage.sh info healthcheck.sh test-api.sh scripts/*.sh
+      - name: Global info symlink regression
+        run: |
+          test -x info
+          tmpdir="$(mktemp -d)"
+          mkdir -p "$tmpdir/project" "$tmpdir/bin"
+          cp info "$tmpdir/project/info"
+          chmod +x "$tmpdir/project/info"
+          cat >"$tmpdir/project/manage.sh" <<'EOF'
+          #!/usr/bin/env bash
+          printf 'MANAGE:%s\n' "$1"
+          EOF
+          chmod +x "$tmpdir/project/manage.sh"
+          ln -s "$tmpdir/project/info" "$tmpdir/bin/glm-info"
+          test "$("$tmpdir/bin/glm-info")" = "MANAGE:info"
       - name: Compose syntax
         run: |
           cp .env.example .env

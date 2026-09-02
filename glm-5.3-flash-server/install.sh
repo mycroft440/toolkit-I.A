@@ -79,13 +79,13 @@ install_compose_plugin_fallback() {
 if ! command -v docker >/dev/null 2>&1; then
   install_docker_ce
 elif ! docker compose version >/dev/null 2>&1; then
-  log "Docker existe, mas o plugin Compose v2 está ausente; tentando pacote da distribuição..."
+  log "Docker existe, mas o plugin Compose está ausente; tentando pacote da distribuição..."
   apt-get install -y docker-compose-v2 >/dev/null 2>&1 || true
   if ! docker compose version >/dev/null 2>&1; then
     install_compose_plugin_fallback
   fi
 fi
-docker compose version >/dev/null 2>&1 || die "Docker Compose v2 não está funcional."
+docker compose version >/dev/null 2>&1 || die "Docker Compose não está funcional."
 systemctl enable --now docker
 
 if ! command -v nvidia-ctk >/dev/null 2>&1; then
@@ -138,6 +138,7 @@ set +a
 HF_CACHE_PATH="${HF_CACHE_DIR:-/var/lib/glm53/huggingface}"
 VLLM_CACHE_PATH="${VLLM_CACHE_DIR:-/var/lib/glm53/vllm-cache}"
 mkdir -p "$HF_CACHE_PATH" "$VLLM_CACHE_PATH"
+chown "$OWNER_USER:$OWNER_GROUP" "$HF_CACHE_PATH" "$VLLM_CACHE_PATH"
 chmod 700 "$HF_CACHE_PATH" "$VLLM_CACHE_PATH"
 
 "$ROOT_DIR/scripts/preflight.sh"
@@ -145,8 +146,9 @@ chmod 700 "$HF_CACHE_PATH" "$VLLM_CACHE_PATH"
 log "Validando Docker Compose..."
 docker compose --env-file .env config >/dev/null
 
-log "Baixando imagens de serviço..."
-docker compose --env-file .env pull
+# Reexecutar install.sh não deve atualizar silenciosamente um runtime já validado.
+log "Garantindo imagens necessárias sem substituir tags já presentes..."
+docker compose --env-file .env pull --policy missing
 
 log "Validando CUDA/vLLM/FlashInfer com a própria imagem de inferência..."
 docker run --rm --gpus all \
@@ -155,7 +157,7 @@ docker run --rm --gpus all \
   -c "import sys, torch, vllm; from importlib.metadata import version; from packaging.version import Version; n=torch.cuda.device_count(); fi=version('flashinfer-python'); print(f'vLLM {vllm.__version__}; FlashInfer {fi}; CUDA OK: {n} GPU(s); {torch.cuda.get_device_name(0) if n else \"none\"}'); sys.exit(0 if n >= ${TENSOR_PARALLEL_SIZE:-8} and Version(fi) >= Version('0.6.17') else 1)"
 
 log "Subindo GLM-5.3-Flash..."
-docker compose --env-file .env up -d
+docker compose --env-file .env up -d --pull never
 
 cat <<MSG
 
