@@ -11,6 +11,7 @@ fi
 cd "$ROOT_DIR"
 OWNER_USER="${SUDO_USER:-root}"
 OWNER_GROUP="$(id -gn "$OWNER_USER")"
+COMPOSE_VERSION="${DOCKER_COMPOSE_VERSION:-v5.5.0}"
 
 if [[ ! -r /etc/os-release ]]; then
   die "Não foi possível identificar o sistema operacional."
@@ -49,12 +50,39 @@ DOCKER_REPO
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 
+install_compose_plugin_fallback() {
+  local arch asset base tmpdir expected actual
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x86_64" ;;
+    aarch64|arm64) arch="aarch64" ;;
+    *) die "Arquitetura não suportada pelo fallback do Docker Compose: $(uname -m)" ;;
+  esac
+
+  asset="docker-compose-linux-${arch}"
+  base="https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}"
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "${tmpdir:-}"' RETURN
+
+  log "Instalando Docker Compose ${COMPOSE_VERSION} pelo release oficial (fallback)..."
+  curl -fsSL "${base}/${asset}" -o "${tmpdir}/${asset}"
+  curl -fsSL "${base}/${asset}.sha256" -o "${tmpdir}/${asset}.sha256"
+  expected="$(awk '{print $1}' "${tmpdir}/${asset}.sha256")"
+  actual="$(sha256sum "${tmpdir}/${asset}" | awk '{print $1}')"
+  [[ -n "$expected" && "$expected" == "$actual" ]] || die "Checksum do Docker Compose não confere."
+
+  install -m 0755 -d /usr/local/lib/docker/cli-plugins
+  install -m 0755 "${tmpdir}/${asset}" /usr/local/lib/docker/cli-plugins/docker-compose
+  rm -rf "$tmpdir"
+  trap - RETURN
+}
+
 if ! command -v docker >/dev/null 2>&1; then
   install_docker_ce
 elif ! docker compose version >/dev/null 2>&1; then
-  log "Docker existe, mas o plugin Compose v2 está ausente; tentando instalar o pacote da distribuição..."
-  if ! apt-get install -y docker-compose-v2; then
-    die "Docker está instalado, mas não foi possível instalar Docker Compose v2 automaticamente. Use a imagem Azure Ubuntu HPC atual ou instale o plugin Compose v2 manualmente."
+  log "Docker existe, mas o plugin Compose v2 está ausente; tentando pacote da distribuição..."
+  apt-get install -y docker-compose-v2 >/dev/null 2>&1 || true
+  if ! docker compose version >/dev/null 2>&1; then
+    install_compose_plugin_fallback
   fi
 fi
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 não está funcional."
@@ -64,7 +92,7 @@ if ! command -v nvidia-ctk >/dev/null 2>&1; then
   log "Instalando NVIDIA Container Toolkit..."
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
     | gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-  curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
     | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
     > /etc/apt/sources.list.d/nvidia-container-toolkit.list
   apt-get update
@@ -99,13 +127,12 @@ if [[ "$OWNER_USER" != "root" ]]; then
   usermod -aG docker "$OWNER_USER" || true
 fi
 
-set -a
-# .env é gerado localmente pelo instalador e é deliberadamente interpretado como shell env.
 # shellcheck disable=SC1091
-source .env
-set +a
-mkdir -p "${HF_CACHE_DIR:-/var/lib/glm53/huggingface}"
-chmod 700 "${HF_CACHE_DIR:-/var/lib/glm53/huggingface}"
+set -a; source .env; set +a
+HF_CACHE_PATH="${HF_CACHE_DIR:-/var/lib/glm53/huggingface}"
+VLLM_CACHE_PATH="${VLLM_CACHE_DIR:-/var/lib/glm53/vllm-cache}"
+mkdir -p "$HF_CACHE_PATH" "$VLLM_CACHE_PATH"
+chmod 700 "$HF_CACHE_PATH" "$VLLM_CACHE_PATH"
 
 "$ROOT_DIR/scripts/preflight.sh"
 
@@ -115,11 +142,11 @@ docker compose --env-file .env config >/dev/null
 log "Baixando imagens de serviço..."
 docker compose --env-file .env pull
 
-log "Validando o runtime CUDA com a própria imagem do vLLM..."
+log "Validando CUDA/vLLM/FlashInfer com a própria imagem de inferência..."
 docker run --rm --gpus all \
   --entrypoint python3 \
   "${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}" \
-  -c "import sys, torch, vllm; n=torch.cuda.device_count(); print(f'vLLM {vllm.__version__}; CUDA OK: {n} GPU(s); {torch.cuda.get_device_name(0) if n else \"none\"}'); sys.exit(0 if n >= ${TENSOR_PARALLEL_SIZE:-8} else 1)"
+  -c "import sys, torch, vllm; from importlib.metadata import version; n=torch.cuda.device_count(); fi=version('flashinfer-python'); nums=tuple(int(x) for x in fi.split('+')[0].split('.')[:3]); print(f'vLLM {vllm.__version__}; FlashInfer {fi}; CUDA OK: {n} GPU(s); {torch.cuda.get_device_name(0) if n else \"none\"}'); sys.exit(0 if n >= ${TENSOR_PARALLEL_SIZE:-8} and nums >= (0,6,17) else 1)"
 
 log "Subindo GLM-5.3-Flash..."
 docker compose --env-file .env up -d
@@ -128,18 +155,20 @@ cat <<MSG
 
 Instalação iniciada com sucesso.
 A primeira inicialização precisa baixar o checkpoint do GLM-5.3-Flash para:
-  ${HF_CACHE_DIR:-/var/lib/glm53/huggingface}
+  ${HF_CACHE_PATH}
 
 Comandos úteis:
   ./manage.sh status
   ./manage.sh logs
   ./manage.sh wait
   ./manage.sh test
+  ./manage.sh diagnose
   ./manage.sh key
 
 Endpoint no host:
   http://${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}/v1
 
 A API key foi salva em .env (permissão 600) e não é exibida automaticamente.
+URLs remotas de mídia ficam bloqueadas por padrão; veja SECURITY.md para liberar somente domínios confiáveis.
 Por segurança, o padrão escuta apenas em 127.0.0.1. Para agentes remotos, leia SECURITY.md antes de alterar BIND_ADDRESS.
 MSG

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=scripts/lib.sh
+# shellcheck source=lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
 
 if [[ -f "$ROOT_DIR/.env" ]]; then
@@ -26,12 +26,12 @@ docker compose version >/dev/null 2>&1 || die "Docker Compose v2 não encontrado
 mapfile -t GPU_MEM < <(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | tr -d ' ')
 mapfile -t GPU_NAME < <(nvidia-smi --query-gpu=name --format=csv,noheader)
 GPU_COUNT="${#GPU_MEM[@]}"
-(( GPU_COUNT >= EXPECTED_GPUS )) || die "São necessárias pelo menos ${EXPECTED_GPUS} GPUs para TP=${EXPECTED_GPUS}; detectadas: ${GPU_COUNT}."
+(( GPU_COUNT >= EXPECTED_GPUS )) || die "São necessárias pelo menos ${EXPECTED_GPUS} GPUs para TP=${TP_SIZE}; detectadas: ${GPU_COUNT}."
 if (( GPU_COUNT > EXPECTED_GPUS )); then
-  warn "Foram detectadas ${GPU_COUNT} GPUs, mas TP=${EXPECTED_GPUS}; GPUs extras poderão ficar ociosas."
+  warn "Foram detectadas ${GPU_COUNT} GPUs, mas TP=${TP_SIZE}; GPUs extras poderão ficar ociosas."
 fi
 
-for i in "${!GPU_MEM[@]}"; do
+for ((i=0; i<EXPECTED_GPUS; i++)); do
   mem="${GPU_MEM[$i]}"
   [[ "$mem" =~ ^[0-9]+$ ]] || die "Não foi possível interpretar a VRAM da GPU $i: $mem"
   (( mem >= MIN_GPU_MEMORY_MIB )) || die "GPU $i (${GPU_NAME[$i]:-desconhecida}) tem ${mem} MiB; este perfil exige >= ${MIN_GPU_MEMORY_MIB} MiB por GPU."
@@ -46,5 +46,5 @@ FREE_GIB="$(( FREE_KIB / 1024 / 1024 ))"
 docker info >/dev/null 2>&1 || die "Docker daemon não está acessível."
 
 DRIVER_VERSION="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n1 | tr -d ' ')"
-GPU_SUMMARY="$(printf '%s\n' "${GPU_NAME[@]}" | sort -u | paste -sd ';' -)"
-log "Pré-validação OK: ${GPU_COUNT} GPUs (${GPU_SUMMARY}); driver ${DRIVER_VERSION}; >=${MIN_GPU_MEMORY_MIB} MiB/GPU; ${FREE_GIB} GiB livres no cache."
+GPU_SUMMARY="$(printf '%s\n' "${GPU_NAME[@]:0:EXPECTED_GPUS}" | sort -u | paste -sd ';' -)"
+log "Pré-validação OK: ${EXPECTED_GPUS}/${GPU_COUNT} GPUs usadas (${GPU_SUMMARY}); driver ${DRIVER_VERSION}; >=${MIN_GPU_MEMORY_MIB} MiB/GPU; ${FREE_GIB} GiB livres no cache."

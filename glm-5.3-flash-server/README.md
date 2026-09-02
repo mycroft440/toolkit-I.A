@@ -6,15 +6,13 @@ Servidor mínimo para hospedar o **GLM-5.3-Flash** e expor uma **API compatível
 
 - Azure: `Standard_ND96isr_H200_v5`
 - GPU: 8× NVIDIA H200 141 GB
-- Imagem: **Ubuntu HPC 24.04** da Microsoft/Azure (`microsoft-dsvm:ubuntu-hpc:2404:latest`)
+- Imagem: **Ubuntu HPC 24.04** da Microsoft/Azure
 - Armazenamento persistente: pelo menos 420 GiB livres; 1 TiB é uma escolha confortável
 - Runtime: Docker + vLLM
 - Modelo: `zai-org/GLM-5.3-Flash` FP8
 - Contexto inicial: 262.144 tokens (conservador para a primeira implantação)
 
 A configuração padrão acompanha a receita oficial atual do vLLM para o GLM-5.3-Flash: H200, tensor parallel 8 e a imagem `vllm/vllm-openai:glm53-flash`.
-
-Na revisão de 2 de setembro de 2026, a versão mais recente publicada da imagem Ubuntu HPC 24.04 A100+ é `24.04.2026072901`, com driver NVIDIA 580.173.02, CUDA 13.0.88, NCCL 2.30.4 e Docker/Moby 29.6.2. Você pode usar `latest`; o instalador valida o runtime real antes de iniciar o modelo.
 
 ## Instalação
 
@@ -28,19 +26,13 @@ sudo ./install.sh
 O instalador:
 
 1. confirma Ubuntu e driver NVIDIA;
-2. reutiliza o Docker existente da imagem HPC ou instala Docker/Compose se necessário;
-3. instala/configura NVIDIA Container Toolkit quando necessário;
-4. gera uma API key aleatória em `.env`;
-5. valida GPUs, VRAM e espaço em disco;
-6. baixa as imagens Docker;
-7. valida CUDA/PyTorch dentro da **mesma imagem vLLM que será usada em produção**;
-8. inicia vLLM e o gateway Nginx.
-
-A API key não é impressa automaticamente. Para vê-la quando necessário:
-
-```bash
-./manage.sh key
-```
+2. reutiliza Docker/Moby existente quando já funcional, evitando substituir desnecessariamente o stack da imagem Azure HPC;
+3. instala Docker/Compose somente se necessário, com fallback verificado por SHA-256 para o Compose;
+4. instala/configura NVIDIA Container Toolkit;
+5. gera uma API key aleatória em `.env`;
+6. valida GPUs, VRAM, disco, vLLM e FlashInfer;
+7. persiste pesos do Hugging Face e cache de compilação do vLLM;
+8. sobe vLLM e o gateway Nginx.
 
 O checkpoint é baixado na primeira inicialização. Acompanhe com:
 
@@ -51,8 +43,13 @@ O checkpoint é baixado na primeira inicialização. Acompanhe com:
 Quando estiver pronto:
 
 ```bash
-./manage.sh wait
 ./manage.sh test
+```
+
+Para diagnóstico sem revelar segredos:
+
+```bash
+./manage.sh diagnose
 ```
 
 ## API
@@ -61,6 +58,12 @@ Base URL padrão no host:
 
 ```text
 http://127.0.0.1:8000/v1
+```
+
+Veja a chave:
+
+```bash
+./manage.sh key
 ```
 
 Exemplo com Python/OpenAI:
@@ -86,27 +89,34 @@ print(response.choices[0].message.content)
 
 ## Segurança
 
-O vLLM tem endpoints que não são protegidos apenas por `--api-key`. Por isso o container vLLM **não publica porta diretamente no host**. O Nginx é o único serviço exposto e encaminha somente `/v1/`; outros caminhos, incluindo `/invocations`, recebem 404.
+O container vLLM não publica sua porta diretamente no host. O Nginx só encaminha `/v1/`, e o bind padrão é `127.0.0.1`.
 
-Por padrão, `BIND_ADDRESS=127.0.0.1`, portanto a API não fica pública. Para agentes remotos, use uma rede privada/VNet/VPN ou altere para `0.0.0.0` somente depois de limitar a porta 8000 no Azure NSG aos IPs confiáveis. Se atravessar internet pública, coloque TLS na frente da API. Não faça commit do arquivo `.env`. Veja `SECURITY.md`.
+URLs remotas de imagens/vídeos/áudio também ficam **bloqueadas por padrão** por `ALLOWED_MEDIA_DOMAIN=media.invalid`, e redirects remotos ficam desligados. Se seus agentes precisarem enviar mídia por URL, troque esse valor por **um domínio explicitamente confiável**. Não use um domínio amplo sem necessidade.
+
+Para agentes remotos, prefira VNet/IP privado, VPN ou allowlist no NSG. Se a API atravessar internet pública, use TLS. Veja `SECURITY.md`.
 
 ## Armazenamento e Azure Spot
 
-O modelo FP8 tem aproximadamente 306 GiB só em pesos. O cache padrão é:
+Pesos do modelo:
 
 ```text
 /var/lib/glm53/huggingface
 ```
 
-O preflight exige pelo menos 420 GiB livres nesse filesystem antes da instalação. Em uma VM criada com disco do sistema pequeno, anexe/mapeie um disco persistente ou aumente o disco antes de executar `install.sh`.
+Cache persistente do vLLM/torch.compile:
 
-Para usar outro disco, edite `.env` antes de subir o serviço:
+```text
+/var/lib/glm53/vllm-cache
+```
+
+O cache de compilação evita recompilar artefatos do vLLM toda vez que o container é recriado, desde que a versão/arquitetura ainda sejam compatíveis.
+
+Para mover os caches para um disco persistente:
 
 ```bash
 HF_CACHE_DIR=/mnt/model-cache/huggingface
+VLLM_CACHE_DIR=/mnt/model-cache/vllm
 ```
-
-Em Azure Spot, armazenamento persistente evita baixar novamente ~306 GiB se a VM precisar ser substituída.
 
 ## Operação
 
@@ -115,34 +125,51 @@ Em Azure Spot, armazenamento persistente evita baixar novamente ~306 GiB se a VM
 ./manage.sh logs
 ./manage.sh wait
 ./manage.sh test
+./manage.sh diagnose
 ./manage.sh restart
 ./manage.sh update
 ```
 
-`restart`/`apply` recria os containers para reaplicar mudanças do `.env`; isso é intencional e recarrega o modelo.
+`restart`/`apply` recriam os containers, portanto mudanças em `.env`, portas e argumentos são realmente aplicadas.
 
 ## Configuração
 
+Principais valores em `.env`:
+
 - `MODEL_ID`: checkpoint Hugging Face.
 - `SERVED_MODEL_NAME`: nome usado pelos clientes OpenAI.
-- `TENSOR_PARALLEL_SIZE`: 8 no perfil H200 oficial.
-- `MAX_MODEL_LEN`: 262144 por padrão; aumente somente após validar estabilidade no seu workload.
+- `VLLM_IMAGE`: imagem do vLLM; não troque para `latest` sem validar o GLM-5.3-Flash.
+- `TENSOR_PARALLEL_SIZE`: 8 no perfil H200.
+- `MAX_MODEL_LEN`: 262144 por padrão.
 - `API_PORT`: porta do gateway.
-- `BIND_ADDRESS`: `127.0.0.1` por padrão; não use `0.0.0.0` sem proteção de rede/TLS.
-- `HF_CACHE_DIR`: local persistente do cache/pesos.
+- `BIND_ADDRESS`: `127.0.0.1` por padrão.
+- `HF_CACHE_DIR`: cache/pesos do Hugging Face.
+- `VLLM_CACHE_DIR`: cache persistente de compilação do vLLM.
 - `API_KEY`: segredo de autenticação.
 - `HF_TOKEN`: opcional para Hugging Face.
+- `ALLOWED_MEDIA_DOMAIN`: domínio remoto permitido para mídia; o padrão inválido bloqueia URLs remotas.
+- `VLLM_MEDIA_URL_ALLOW_REDIRECTS`: `0` por padrão.
+
+## Reprodutibilidade
+
+GLM-5.3-Flash e sua imagem de integração ainda estão recebendo atualizações rápidas. Antes do **primeiro teste real bem-sucedido** seguimos o tag oficial para receber correções upstream. Depois desse teste, o plano é registrar e congelar:
+
+1. digest exato da imagem vLLM;
+2. revisão exata do checkpoint;
+3. versões vLLM/FlashInfer/driver usadas.
+
+`./manage.sh diagnose` já mostra o digest e versões de runtime necessárias para esse congelamento.
 
 ## Limites desta primeira versão
 
-Este primeiro perfil é propositalmente conservador: ele mira o hardware oficialmente documentado, limita o contexto inicial a 262.144 tokens e não ativa MTP/DBO/FP8-KV em Hopper. Depois do teste real, essas otimizações podem ser avaliadas uma por uma. Perfis menores/mais baratos com H100 e quantização exigem validação separada.
-
-Leia `AUDIT.md` para a revisão técnica mais recente.
+A configuração inicial privilegia previsibilidade: 262.144 tokens de contexto e sem MTP/DBO/FP8-KV forçado em Hopper. Depois do teste real, otimizações devem ser ativadas uma por uma.
 
 ## Referências upstream
 
 - Modelo oficial: https://huggingface.co/zai-org/GLM-5.3-Flash
 - Receita vLLM: https://recipes.vllm.ai/zai-org/GLM-5.3-Flash
+- Docker vLLM: https://docs.vllm.ai/en/latest/deployment/docker/
 - Segurança vLLM: https://docs.vllm.ai/en/latest/usage/security/
+- NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
 - Azure Ubuntu HPC: https://learn.microsoft.com/azure/virtual-machines/azure-hpc-vm-images
 - Azure ND-H200-v5: https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nd-h200-v5-series

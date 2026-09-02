@@ -10,8 +10,11 @@ services:
       HF_TOKEN: "${HF_TOKEN:-}"
       VLLM_API_KEY: "${API_KEY}"
       VLLM_ENGINE_READY_TIMEOUT_S: "${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
+      VLLM_MEDIA_URL_ALLOW_REDIRECTS: "${VLLM_MEDIA_URL_ALLOW_REDIRECTS:-0}"
+      VLLM_CACHE_ROOT: /root/.cache/vllm
     volumes:
       - "${HF_CACHE_DIR:-/var/lib/glm53/huggingface}:/root/.cache/huggingface"
+      - "${VLLM_CACHE_DIR:-/var/lib/glm53/vllm-cache}:/root/.cache/vllm"
     deploy:
       resources:
         reservations:
@@ -33,6 +36,8 @@ services:
       - glm45
       - --served-model-name
       - "${SERVED_MODEL_NAME:-glm-5.3-flash}"
+      - --allowed-media-domains
+      - "${ALLOWED_MEDIA_DOMAIN:-media.invalid}"
     logging:
       driver: json-file
       options:
