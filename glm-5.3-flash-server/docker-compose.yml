@@ -1,0 +1,52 @@
+services:
+  vllm:
+    image: "${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}"
+    container_name: glm53-flash-vllm
+    restart: unless-stopped
+    privileged: true
+    ipc: host
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HUGGING_FACE_HUB_TOKEN: "${HF_TOKEN:-}"
+      VLLM_API_KEY: "${API_KEY}"
+      VLLM_ENGINE_READY_TIMEOUT_S: "${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
+    volumes:
+      - "${HF_CACHE_DIR:-/var/lib/glm53/huggingface}:/root/.cache/huggingface"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - "${MODEL_ID:-zai-org/GLM-5.3-Flash}"
+      - --tensor-parallel-size
+      - "${TENSOR_PARALLEL_SIZE:-8}"
+      - --no-enable-flashinfer-autotune
+      - --tool-call-parser
+      - glm47
+      - --enable-auto-tool-choice
+      - --reasoning-parser
+      - glm45
+      - --served-model-name
+      - "${SERVED_MODEL_NAME:-glm-5.3-flash}"
+    networks:
+      - glm-internal
+
+  gateway:
+    image: nginx:1.29-alpine
+    container_name: glm53-flash-gateway
+    restart: unless-stopped
+    depends_on:
+      - vllm
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${API_PORT:-8000}:8000"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - glm-internal
+
+networks:
+  glm-internal:
+    driver: bridge

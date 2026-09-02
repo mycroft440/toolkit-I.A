@@ -1,0 +1,32 @@
+name: GLM 5.3 Flash server CI
+
+on:
+  push:
+    paths:
+      - 'glm-5.3-flash-server/**'
+      - '.github/workflows/glm53-flash-server-ci.yml'
+  pull_request:
+    paths:
+      - 'glm-5.3-flash-server/**'
+      - '.github/workflows/glm53-flash-server-ci.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: glm-5.3-flash-server
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: bash -n install.sh manage.sh healthcheck.sh test-api.sh scripts/*.sh
+      - name: ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck install.sh manage.sh healthcheck.sh test-api.sh scripts/*.sh
+      - name: Compose syntax
+        run: |
+          cp .env.example .env
+          sed -i 's/^API_KEY=.*/API_KEY=ci-test-key/' .env
+          docker compose --env-file .env config >/dev/null
