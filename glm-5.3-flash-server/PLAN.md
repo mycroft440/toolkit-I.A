@@ -14,6 +14,7 @@ Entregar somente o servidor de inferência do `zai-org/GLM-5.3-Flash`, acessíve
 - **Segurança:** vLLM usa API key; Nginx publica somente `/v1` e bloqueia endpoints não autenticados como `/invocations`.
 - **Persistência:** cache Hugging Face em diretório configurável; recomendado usar armazenamento persistente com >= 420 GiB livres.
 - **Recuperação:** containers com `restart: unless-stopped`; Docker habilitado no boot.
+- **Perfil conservador inicial:** contexto de 262.144 tokens; sem MTP, DBO ou FP8 KV em Hopper até validação real.
 
 ## Fases
 

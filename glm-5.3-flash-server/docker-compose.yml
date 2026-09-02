@@ -23,6 +23,8 @@ services:
       - "${MODEL_ID:-zai-org/GLM-5.3-Flash}"
       - --tensor-parallel-size
       - "${TENSOR_PARALLEL_SIZE:-8}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
       - --no-enable-flashinfer-autotune
       - --tool-call-parser
       - glm47

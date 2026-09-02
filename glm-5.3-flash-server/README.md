@@ -10,6 +10,7 @@ Servidor mínimo para hospedar o **GLM-5.3-Flash** e expor uma **API compatível
 - Armazenamento persistente: pelo menos 420 GiB livres; 1 TiB é uma escolha confortável
 - Runtime: Docker + vLLM
 - Modelo: `zai-org/GLM-5.3-Flash` FP8
+- Contexto inicial: 262.144 tokens (conservador para a primeira implantação)
 
 A configuração padrão acompanha a receita oficial atual do vLLM para o GLM-5.3-Flash: H200, tensor parallel 8 e a imagem `vllm/vllm-openai:glm53-flash`.
 
@@ -119,6 +120,7 @@ Copie/edite `.env` conforme necessário. Os principais valores são:
 - `MODEL_ID`: checkpoint Hugging Face.
 - `SERVED_MODEL_NAME`: nome usado pelos clientes OpenAI.
 - `TENSOR_PARALLEL_SIZE`: 8 no perfil H200 oficial.
+- `MAX_MODEL_LEN`: 262144 por padrão; aumente somente após validar estabilidade no seu workload.
 - `API_PORT`: porta pública do gateway.
 - `HF_CACHE_DIR`: local persistente do cache/pesos.
 - `API_KEY`: segredo de autenticação.
@@ -126,7 +128,7 @@ Copie/edite `.env` conforme necessário. Os principais valores são:
 
 ## Limites desta primeira versão
 
-Este primeiro perfil é propositalmente conservador: ele mira o hardware oficialmente documentado para minimizar problemas de implantação. Perfis menores/mais baratos com H100 e quantização podem ser adicionados depois, mas exigem validação separada e aumentam a chance de incompatibilidades.
+Este primeiro perfil é propositalmente conservador: ele mira o hardware oficialmente documentado, limita o contexto inicial a 262.144 tokens e não ativa MTP/DBO/FP8-KV em Hopper. Depois do teste real, essas otimizações podem ser avaliadas uma por uma. Perfis menores/mais baratos com H100 e quantização também podem ser adicionados depois, mas exigem validação separada e aumentam a chance de incompatibilidades.
 
 ## Referências upstream
 
