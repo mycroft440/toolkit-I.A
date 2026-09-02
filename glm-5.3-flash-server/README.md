@@ -6,7 +6,7 @@ Servidor mínimo para hospedar o **GLM-5.3-Flash** e expor uma **API compatível
 
 - Azure: `Standard_ND96isr_H200_v5`
 - GPU: 8× NVIDIA H200 141 GB
-- Imagem: **Ubuntu HPC** da Microsoft/Azure
+- Imagem: **Ubuntu HPC 24.04** da Microsoft/Azure (`microsoft-dsvm:ubuntu-hpc:2404:latest`)
 - Armazenamento persistente: pelo menos 420 GiB livres; 1 TiB é uma escolha confortável
 - Runtime: Docker + vLLM
 - Modelo: `zai-org/GLM-5.3-Flash` FP8
@@ -14,9 +14,9 @@ Servidor mínimo para hospedar o **GLM-5.3-Flash** e expor uma **API compatível
 
 A configuração padrão acompanha a receita oficial atual do vLLM para o GLM-5.3-Flash: H200, tensor parallel 8 e a imagem `vllm/vllm-openai:glm53-flash`.
 
-## Instalação
+Na revisão de 2 de setembro de 2026, a versão mais recente publicada da imagem Ubuntu HPC 24.04 A100+ é `24.04.2026072901`, com driver NVIDIA 580.173.02, CUDA 13.0.88, NCCL 2.30.4 e Docker/Moby 29.6.2. Você pode usar `latest`; o instalador valida o runtime real antes de iniciar o modelo.
 
-No repositório `toolkit-I.A`:
+## Instalação
 
 ```bash
 git clone https://github.com/mycroft440/toolkit-I.A.git
@@ -28,12 +28,19 @@ sudo ./install.sh
 O instalador:
 
 1. confirma Ubuntu e driver NVIDIA;
-2. instala Docker/Compose se necessário;
-3. instala/configura NVIDIA Container Toolkit;
+2. reutiliza o Docker existente da imagem HPC ou instala Docker/Compose se necessário;
+3. instala/configura NVIDIA Container Toolkit quando necessário;
 4. gera uma API key aleatória em `.env`;
-5. valida 8 GPUs, VRAM e espaço em disco;
+5. valida GPUs, VRAM e espaço em disco;
 6. baixa as imagens Docker;
-7. inicia vLLM e o gateway Nginx.
+7. valida CUDA/PyTorch dentro da **mesma imagem vLLM que será usada em produção**;
+8. inicia vLLM e o gateway Nginx.
+
+A API key não é impressa automaticamente. Para vê-la quando necessário:
+
+```bash
+./manage.sh key
+```
 
 O checkpoint é baixado na primeira inicialização. Acompanhe com:
 
@@ -44,6 +51,7 @@ O checkpoint é baixado na primeira inicialização. Acompanhe com:
 Quando estiver pronto:
 
 ```bash
+./manage.sh wait
 ./manage.sh test
 ```
 
@@ -53,12 +61,6 @@ Base URL padrão no host:
 
 ```text
 http://127.0.0.1:8000/v1
-```
-
-Veja a chave:
-
-```bash
-./manage.sh key
 ```
 
 Exemplo com Python/OpenAI:
@@ -90,17 +92,21 @@ Por padrão, `BIND_ADDRESS=127.0.0.1`, portanto a API não fica pública. Para a
 
 ## Armazenamento e Azure Spot
 
-O modelo FP8 tem aproximadamente 306 GiB só em pesos. Use armazenamento persistente para `HF_CACHE_DIR` se quiser evitar novo download após substituição de uma VM Spot. O caminho padrão é:
+O modelo FP8 tem aproximadamente 306 GiB só em pesos. O cache padrão é:
 
 ```text
 /var/lib/glm53/huggingface
 ```
+
+O preflight exige pelo menos 420 GiB livres nesse filesystem antes da instalação. Em uma VM criada com disco do sistema pequeno, anexe/mapeie um disco persistente ou aumente o disco antes de executar `install.sh`.
 
 Para usar outro disco, edite `.env` antes de subir o serviço:
 
 ```bash
 HF_CACHE_DIR=/mnt/model-cache/huggingface
 ```
+
+Em Azure Spot, armazenamento persistente evita baixar novamente ~306 GiB se a VM precisar ser substituída.
 
 ## Operação
 
@@ -113,9 +119,9 @@ HF_CACHE_DIR=/mnt/model-cache/huggingface
 ./manage.sh update
 ```
 
-## Configuração
+`restart`/`apply` recria os containers para reaplicar mudanças do `.env`; isso é intencional e recarrega o modelo.
 
-Copie/edite `.env` conforme necessário. Os principais valores são:
+## Configuração
 
 - `MODEL_ID`: checkpoint Hugging Face.
 - `SERVED_MODEL_NAME`: nome usado pelos clientes OpenAI.
@@ -129,7 +135,9 @@ Copie/edite `.env` conforme necessário. Os principais valores são:
 
 ## Limites desta primeira versão
 
-Este primeiro perfil é propositalmente conservador: ele mira o hardware oficialmente documentado, limita o contexto inicial a 262.144 tokens e não ativa MTP/DBO/FP8-KV em Hopper. Depois do teste real, essas otimizações podem ser avaliadas uma por uma. Perfis menores/mais baratos com H100 e quantização também podem ser adicionados depois, mas exigem validação separada e aumentam a chance de incompatibilidades.
+Este primeiro perfil é propositalmente conservador: ele mira o hardware oficialmente documentado, limita o contexto inicial a 262.144 tokens e não ativa MTP/DBO/FP8-KV em Hopper. Depois do teste real, essas otimizações podem ser avaliadas uma por uma. Perfis menores/mais baratos com H100 e quantização exigem validação separada.
+
+Leia `AUDIT.md` para a revisão técnica mais recente.
 
 ## Referências upstream
 

@@ -4,7 +4,7 @@
 
 O projeto usa `BIND_ADDRESS=127.0.0.1` por padrão. Isso evita publicar a API na internet por acidente.
 
-O vLLM recebe uma API key forte gerada pelo instalador e fica atrás de um gateway Nginx que publica somente `/v1/`. Endpoints como `/invocations` ficam bloqueados.
+O vLLM recebe uma API key forte gerada pelo instalador e fica atrás de um gateway Nginx que publica somente `/v1/`. Endpoints como `/invocations` ficam bloqueados. A chave é armazenada em `.env` com modo 600 e não é impressa pelo instalador.
 
 ## Se os agentes estiverem fora da VM
 
@@ -21,6 +21,8 @@ Depois de alterar `.env`:
 ./manage.sh restart
 ```
 
+`restart` recria os containers, portanto as novas variáveis/portas são efetivamente aplicadas.
+
 ## Azure NSG
 
 - SSH/22: permita apenas seu IP administrativo ou use Azure Bastion.
@@ -31,7 +33,8 @@ Depois de alterar `.env`:
 
 - `.env` está no `.gitignore`.
 - Não cole a API key em commits, issues ou logs públicos.
-- Para rotacionar a chave, altere `API_KEY` no `.env` e reinicie os containers.
+- Para ver a chave deliberadamente, use `./manage.sh key`.
+- Para rotacionar a chave, altere `API_KEY` no `.env` e execute `./manage.sh restart`.
 
 ## Limitação do `--api-key` do vLLM
 
