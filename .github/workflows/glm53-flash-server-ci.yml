@@ -40,11 +40,14 @@ jobs:
           chmod +x "$tmpdir/project/manage.sh"
           ln -s "$tmpdir/project/info" "$tmpdir/bin/glm-info"
           test "$("$tmpdir/bin/glm-info")" = "MANAGE:info"
-      - name: Compose syntax
+      - name: Compose syntax and revision pin wiring
         run: |
           cp .env.example .env
           sed -i 's/^API_KEY=.*/API_KEY=ci-test-key/' .env
-          docker compose --env-file .env config >/dev/null
+          docker compose --env-file .env config > /tmp/glm-compose.yml
+          grep -F -- '--revision' /tmp/glm-compose.yml
+          grep -F -- '--tokenizer-revision' /tmp/glm-compose.yml
+          grep -F -- 'main' /tmp/glm-compose.yml
       - name: Nginx syntax
         run: |
           docker run --rm \

@@ -2,70 +2,60 @@
 
 ## Padrão seguro
 
-O projeto usa `BIND_ADDRESS=127.0.0.1` por padrão. Isso evita publicar a API na internet por acidente.
+O projeto usa `BIND_ADDRESS=127.0.0.1` por padrão. O container vLLM não publica sua porta diretamente; o Nginx encaminha somente `/v1/`. Endpoints auxiliares como `/invocations` ficam bloqueados pelo gateway.
 
-O vLLM recebe uma API key forte gerada pelo instalador e fica atrás de Nginx, que publica somente `/v1/`. Endpoints não necessários, como `/invocations`, ficam bloqueados pelo gateway.
+A API key é gerada aleatoriamente e o `.env` recebe permissão `600`.
+
+## `glm-info` mostra a chave
+
+Por solicitação de operação simplificada, `glm-info` / `./info` mostram a API key junto das demais informações de conexão. Trate a saída como **segredo**: não envie print, gravação de terminal ou log desse painel para terceiros.
+
+Para diagnóstico que não mostra segredos, use:
+
+```bash
+./manage.sh diagnose
+```
 
 ## SSRF e mídia remota
 
-vLLM pode receber URLs de mídia em workloads multimodais. Sem restrição de domínio, um cliente poderia tentar fazer o servidor acessar recursos internos da rede ou metadados da nuvem.
-
-Por isso os defaults são:
+vLLM pode receber URLs de mídia. Para evitar que clientes façam o servidor consultar recursos internos/metadados da nuvem, os defaults são:
 
 ```bash
 ALLOWED_MEDIA_DOMAIN=media.invalid
 VLLM_MEDIA_URL_ALLOW_REDIRECTS=0
 ```
 
-`media.invalid` é deliberadamente inválido e efetivamente bloqueia mídia remota por URL.
+Se precisar de mídia remota, libere somente um domínio confiável. Não use `*`, domínio de terceiros ou host capaz de redirecionar para destinos internos.
 
-Se precisar de mídia remota, use somente um domínio confiável, por exemplo:
+## Agentes fora da VM
 
-```bash
-ALLOWED_MEDIA_DOMAIN=media.exemplo.com
-```
+Preferência:
 
-Depois:
+1. Azure VNet / IP privado;
+2. VPN/Tailscale/WireGuard;
+3. NSG com allowlist de IP e `BIND_ADDRESS=0.0.0.0`;
+4. Internet pública somente com TLS/HTTPS + API key.
 
-```bash
-./manage.sh apply
-```
+No Azure NSG, não abra TCP/8000 para `0.0.0.0/0`. Restrinja SSH/22 ao seu IP ou use Bastion.
 
-Não use `*`, um domínio controlado por terceiros ou um host que possa redirecionar para destinos internos.
+## Atualizações
 
-## Se os agentes estiverem fora da VM
+`start`, `restart` e `apply` não fazem pull de imagens. Isso reduz a chance de um tag mutável mudar silenciosamente entre reinícios.
 
-Escolha, em ordem de preferência:
+`./manage.sh update` é deliberado: valida configuração/disco antes do download, baixa somente a imagem vLLM, valida CUDA/vLLM/FlashInfer antes de recriar e roda health + smoke test completo depois. Se o novo runtime falhar, tenta restaurar a imagem anterior.
 
-1. **Azure VNet / IP privado**.
-2. **VPN/Tailscale/WireGuard**.
-3. **NSG com allowlist de IP**, alterando `BIND_ADDRESS=0.0.0.0` apenas depois de restringir TCP/8000.
-4. **Internet pública**, somente com TLS/HTTPS e API key.
+Depois do primeiro teste H200 bem-sucedido, fixe o digest da imagem vLLM e o commit em `MODEL_REVISION`. Quando `VLLM_IMAGE` estiver em `@sha256:...`, a atualização automática é recusada por design.
 
-## Azure NSG
-
-- SSH/22: permita apenas seu IP administrativo ou use Azure Bastion.
-- API/8000: não crie regra `0.0.0.0/0`.
-- Portas internas do vLLM/NCCL: não exponha.
-
-## Segredos
+## Segredos e caches
 
 - `.env` está no `.gitignore`.
-- `.env` recebe permissão `600`.
-- O instalador não imprime a API key automaticamente.
-- Não cole a chave em commits, issues ou logs públicos.
-- Para rotacionar: altere `API_KEY` e rode `./manage.sh apply`.
-
-## Cache
-
-Os caches Hugging Face e vLLM devem vir apenas de fontes confiáveis. Não reutilize cache recebido de terceiros.
-
-## Diagnóstico
-
-`./manage.sh diagnose` mostra SO, GPUs, driver, Docker, digest da imagem e versões vLLM/FlashInfer, mas não imprime `API_KEY` nem `HF_TOKEN`.
+- Não cole `API_KEY`/`HF_TOKEN` em commits, issues ou logs.
+- Para rotacionar a chave, altere `API_KEY` e rode `./manage.sh apply`.
+- Caches Hugging Face/vLLM devem vir apenas de fontes confiáveis.
+- Os diretórios de cache são criados com modo `700` e pertencem ao usuário que executou a instalação via sudo.
 
 ## Limitação do `--api-key` do vLLM
 
-A autenticação nativa do vLLM não cobre toda a superfície administrativa/auxiliar. O gateway Nginx limita a exposição a `/v1/` justamente para reduzir esse risco.
+A autenticação nativa do vLLM não cobre necessariamente toda a superfície administrativa/auxiliar. Por isso o gateway limita a exposição a `/v1/`.
 
 Referência: https://docs.vllm.ai/en/latest/usage/security/

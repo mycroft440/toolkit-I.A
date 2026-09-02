@@ -2,92 +2,88 @@
 
 ## Escopo
 
-Revisão do bootstrap Azure, Docker/Compose, runtime NVIDIA, vLLM, gateway, smoke tests, persistência e documentação contra as fontes upstream atuais.
+Revisão repetida do bootstrap Azure, Docker/Compose, NVIDIA Container Toolkit, vLLM, GLM-5.3-Flash, Nginx, API OpenAI, tool calling, segurança, persistência, atualização/rollback, `glm-info`, CI e documentação.
 
-## Verificações confirmadas
+## Base confirmada
 
-- `Standard_ND96isr_H200_v5` fornece 8× H200 de 141 GB e é suportada pelo Ubuntu HPC.
-- A receita atual do vLLM para `zai-org/GLM-5.3-Flash` usa a imagem `vllm/vllm-openai:glm53-flash`, H200, TP=8, `glm47` para tool calling e `glm45` para reasoning.
-- O checkpoint oficial FP8 ocupa aproximadamente 306 GiB antes do overhead de runtime/KV.
-- Docker Compose suporta reserva de GPU via `deploy.resources.reservations.devices`.
-- `VLLM_API_KEY` não protege todos os endpoints do servidor vLLM; manter o vLLM atrás do gateway é necessário.
-- A documentação atual do vLLM recomenda allowlist para URLs de mídia e redirects desligados para reduzir SSRF.
-- O vLLM recomenda persistir também `~/.cache/vllm` para reaproveitar artefatos de compilação entre containers.
+- Alvo: Azure `Standard_ND96isr_H200_v5`, 8× H200 141 GB.
+- Runtime: imagem especial `vllm/vllm-openai:glm53-flash` indicada pela receita atual do GLM-5.3-Flash.
+- Perfil inicial: TP=8, 262.144 tokens, `glm47` para tools, `glm45` para reasoning, sem DBO/MTP/KV offload/FP8-KV forçado em Hopper.
+- FlashInfer mínimo validado pelo bootstrap: 0.6.17; a receita recomenda checar 0.6.18+ se houver erro específico de Sparse-MLA.
 
-## Problemas encontrados e corrigidos
+## Problemas encontrados e corrigidos ao longo das auditorias
 
-1. **Teste CUDA incompatível com a imagem Azure recomendada:** a validação passou a usar a própria imagem `vllm/vllm-openai:glm53-flash`.
-2. **`restart` não reaplicava `.env`:** `restart/apply` usa `up -d --force-recreate`.
-3. **Probe preso em `127.0.0.1`:** health/test calculam a origem a partir do bind.
-4. **Chave impressa automaticamente:** permanece somente no `.env` (modo 600), sob comando explícito.
-5. **Logs sem limite:** rotação configurada.
-6. **Endpoint `/healthz` desnecessário:** removido.
-7. **Smoke test incompleto:** valida auth, `/invocations`, `/v1/models` e chat.
-8. **CI incompleta:** `workflow_dispatch`, ShellCheck, Compose e `nginx -t`.
-9. **Variável Hugging Face antiga:** `HUGGING_FACE_HUB_TOKEN` substituída por `HF_TOKEN`.
-10. **Keyring NVIDIA não idempotente:** `gpg --batch --yes`.
-11. **Risco de conflito com Moby do Azure HPC:** Docker existente é reutilizado; Docker CE só é instalado quando `docker` não existe.
-12. **Compose v2 ausente em instalação parcial:** há fallback para release oficial do Docker Compose com validação SHA-256.
-13. **Cache de compilação efêmero:** `VLLM_CACHE_DIR` é persistido em `/root/.cache/vllm`.
-14. **SSRF por mídia remota:** URLs remotas ficam bloqueadas por padrão com `media.invalid`; redirects ficam desligados.
-15. **Diagnóstico insuficiente:** `./manage.sh diagnose` mostra SO, GPUs, driver, Docker, digest da imagem e versões vLLM/FlashInfer sem mostrar segredos.
-16. **Preflight validava GPUs extras desnecessariamente:** agora só exige VRAM das GPUs efetivamente usadas pelo TP.
-17. **Versão crítica do FlashInfer não era conferida:** o bootstrap rejeita imagem abaixo de 0.6.17 e registra a versão usada.
-18. **Compatibilidade de históricos de agentes:** documentada a normalização de `assistant.content=null` + `tool_calls` para `content=""` enquanto o fix upstream #54368 ainda não estiver incorporado à imagem validada.
-19. **Flags antigas de thinking:** documentado que clientes GLM-5.3 devem usar `reasoning_effort`/`clear_thinking` e evitar `enable_thinking`/`thinking`, devido ao bug upstream #54744.
+1. teste CUDA genérico podia divergir da imagem real; agora testa a própria imagem vLLM;
+2. `restart` não reaplicava `.env`; agora recria containers;
+3. health/test presos em 127.0.0.1; agora respeitam o bind para probes locais;
+4. API key era impressa automaticamente na instalação; removido;
+5. logs Docker sem rotação; corrigido;
+6. `/healthz` desnecessário no gateway; removido;
+7. smoke test incompleto; ampliado para auth, bloqueio, models, chat e tool calling;
+8. CI ganhou Bash, ShellCheck, Compose, Nginx e teste do symlink global;
+9. variável Hugging Face antiga substituída por `HF_TOKEN`;
+10. keyring NVIDIA tornado idempotente (`gpg --batch --yes`);
+11. possível conflito com Moby do Azure HPC; Docker existente é reutilizado;
+12. fallback do Compose usa release oficial + SHA-256;
+13. cache de compilação vLLM passou a ser persistente;
+14. mídia remota bloqueada por domínio inválido + redirects desligados para reduzir SSRF;
+15. `diagnose` mostra driver/GPU/Docker/digest/runtime sem mostrar segredos;
+16. preflight passou a validar apenas GPUs efetivamente exigidas e parâmetros numéricos;
+17. FlashInfer passou a ser verificado antes de carregar o modelo;
+18. compatibilidade `content=null + tool_calls` documentada;
+19. flags antigas de thinking documentadas como inseguras para GLM-5.3;
+20. **bug real em `glm-info` global**: symlink fazia `BASH_SOURCE` apontar para `/usr/local/bin`; reproduzido e corrigido com `readlink -f`;
+21. `info/key/test` escalavam para sudo sem necessidade; removido;
+22. `info` não tinha modo executável no Git; corrigido para `100755`;
+23. CI agora executa o launcher através de um symlink real e impede regressão;
+24. caches `root:root` modo 700 dificultavam operação posterior sem sudo; continuam 700, mas pertencem ao usuário instalador;
+25. preflight só media espaço dos pesos; agora mede também Docker + cache vLLM e **soma requisitos quando compartilham filesystem**;
+26. com defaults no mesmo filesystem, o mínimo agregado passa a 520 GiB livres (420 + 80 + 20);
+27. reexecutar `install.sh` podia puxar tags novas; agora usa pull somente se a imagem estiver ausente;
+28. `start/restart/apply` passam a usar `--pull never`, impedindo atualização silenciosa;
+29. `update` passa a validar configuração/disco antes do pull e baixa apenas vLLM;
+30. imagem vLLM nova é testada em CUDA/vLLM/FlashInfer antes de recriar o servidor;
+31. `update` só é aceito após health + smoke test completo; em falha tenta retag/recriar a imagem anterior;
+32. imagem fixada por digest não é atualizada automaticamente;
+33. foi adicionado `MODEL_REVISION`, enviado a `--revision` e `--tokenizer-revision`, para permitir pin do checkpoint após o teste real;
+34. `glm-info`/`diagnose` passam a mostrar a revisão configurada;
+35. smoke test ganhou uma função nomeada para validar de fato o parser `glm47` e `tool_calls` OpenAI.
 
-## Decisões mantidas
+## Issues upstream triadas
 
-- Contexto inicial de 262.144 tokens.
-- Sem MTP, DBO ou FP8 KV forçado na primeira implantação H200.
-- Bind local (`127.0.0.1`) por padrão.
-- `privileged` + `ipc: host`, pois a receita oficial atual do caminho Docker H200 ainda os utiliza.
-- Imagem especial `glm53-flash`, sem troca automática para `latest`.
+Os problemas recentes mais graves encontrados estão associados a B200/GB200, Ada, ROCm, DBO, DCP, MTP ou KV offloading. O perfil conservador H200/TP8 não habilita esses caminhos.
 
-## FlashInfer: discrepância upstream
+Para agentes existem dois pontos independentes de GPU:
 
-A receita declara FlashInfer **0.6.17+** nos pré-requisitos, mas a seção de troubleshooting sugere conferir **0.6.18+** caso apareça erro de inicialização Sparse-MLA.
-
-Não vamos substituir preventivamente a imagem oficial. O instalador confirma >=0.6.17; se a H200 real apresentar o erro específico, `diagnose` registrará a versão e a atualização será feita de forma controlada.
-
-## Issues recentes triadas
-
-A busca final encontrou falhas em Ada/RTX 4090, RTX PRO 6000 SM120, B200, ROCm, KV offloading, MTP e DBO. Nosso perfil inicial H200/Hopper evita esses caminhos: não usa ROCm, KV offloading, MTP, DBO nem FP8-KV forçado. Não foi encontrado um bloqueador H200 equivalente nas issues pesquisadas.
-
-Há, porém, bugs de frontend/client que independem da GPU e importam para agentes; por isso `AGENT_COMPAT.md` faz parte do deployment.
+- `#54337` (`content=null + tool_calls`) está marcado como fechado, mas a PR proposta `#54368` continua aberta/não mesclada nesta revisão; mantenha normalização no cliente até validar a imagem instalada.
+- `#54744` continua aberto: `enable_thinking/thinking=false` pode fazer reasoning vazar em `content`; use `reasoning_effort` + `clear_thinking`.
 
 ## Reprodutibilidade
 
-Checkpoint e imagem ainda recebem atualizações rápidas. A estratégia é não congelar uma revisão possivelmente defeituosa antes do primeiro teste H200. Após o primeiro carregamento e smoke test bem-sucedidos, registrar:
+Antes do primeiro H200 real:
+
+- `VLLM_IMAGE=vllm/vllm-openai:glm53-flash`;
+- `MODEL_REVISION=main`.
+
+Depois de carregar o modelo e passar chat + tool calling, registrar e fixar:
 
 - digest da imagem;
-- revisão do checkpoint;
+- commit do checkpoint em `MODEL_REVISION`;
 - vLLM;
 - FlashInfer;
 - driver NVIDIA.
 
-Depois disso, congelar a combinação validada.
+## Estado da validação
 
-## Validação automatizada
+GitHub Actions valida sintaxe Bash, ShellCheck, Compose, Nginx e o comportamento do `glm-info` global. A única classe de teste que permanece impossível sem a VM é o runtime completo em 8× H200: download/carregamento FP8, alocação KV, inferência, tool calling sob GPU e reboot/Spot.
 
-O GitHub Actions valida sintaxe Bash, ShellCheck, resolução do Docker Compose e sintaxe do Nginx. A validação real de CUDA/H200/modelo só pode ocorrer na VM GPU.
-
-## Risco residual
-
-O risco principal restante é runtime real: o GLM-5.3-Flash/vLLM é recente e ainda há mudanças upstream. A versão só deve ser classificada como comprovada depois do carregamento FP8 e smoke tests em uma Azure `Standard_ND96isr_H200_v5`.
-
-## Fontes
+## Fontes principais
 
 - https://recipes.vllm.ai/zai-org/GLM-5.3-Flash
-- https://huggingface.co/zai-org/GLM-5.3-Flash
-- https://docs.vllm.ai/en/latest/deployment/docker/
+- https://docs.vllm.ai/en/latest/cli/serve/
 - https://docs.vllm.ai/en/latest/usage/security/
-- https://docs.docker.com/compose/how-tos/gpu-support/
-- https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
-- https://huggingface.co/docs/huggingface_hub/main/package_reference/environment_variables
-- https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nd-h200-v5-series
-- https://learn.microsoft.com/azure/virtual-machines/azure-hpc-vm-images
-- https://github.com/Azure/azhpc-images/releases
 - https://github.com/vllm-project/vllm/issues/54337
 - https://github.com/vllm-project/vllm/pull/54368
 - https://github.com/vllm-project/vllm/issues/54744
+- https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nd-h200-v5-series
+- https://learn.microsoft.com/azure/virtual-machines/azure-hpc-vm-images

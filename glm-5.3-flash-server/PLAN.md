@@ -6,36 +6,44 @@ Entregar somente o servidor de inferência do `zai-org/GLM-5.3-Flash`, acessíve
 
 ## Decisões técnicas
 
-- **Runtime:** vLLM oficial, via Docker.
-- **Modelo padrão:** `zai-org/GLM-5.3-Flash` FP8 (320B total / 18B ativos).
-- **Hardware de referência:** Azure `Standard_ND96isr_H200_v5`, 8× H200 141 GB, TP=8.
-- **Imagem da VM:** Azure Ubuntu HPC 24.04, para reduzir instalação manual de driver/CUDA/NCCL/Docker.
-- **API:** compatível com OpenAI em `/v1`; bind local por padrão.
-- **Segurança:** vLLM usa API key; Nginx publica somente `/v1` e bloqueia endpoints não autenticados como `/invocations`.
-- **Persistência:** cache Hugging Face em diretório configurável; recomendado usar armazenamento persistente com >= 420 GiB livres.
-- **Recuperação:** containers com `restart: unless-stopped`; Docker habilitado no boot.
-- **Perfil conservador inicial:** contexto de 262.144 tokens; sem MTP, DBO ou FP8 KV em Hopper até validação real.
+- Runtime: vLLM via Docker, usando a imagem especial do GLM-5.3-Flash.
+- Hardware de referência: Azure `Standard_ND96isr_H200_v5`, 8× H200 141 GB, TP=8.
+- VM: Azure Ubuntu HPC 24.04.
+- API: `/v1`, protegida por API key e Nginx; bind local por padrão.
+- Perfil inicial: 262.144 tokens; sem MTP, DBO, KV offload ou FP8-KV forçado em Hopper.
+- Persistência: pesos + cache de compilação. Se Docker e os dois caches dividirem filesystem, mínimo agregado padrão de 520 GiB livres; 1 TiB persistente recomendado.
+- Reprodutibilidade: `MODEL_REVISION=main` antes do primeiro teste; commit exato + digest da imagem depois da validação H200.
+- Atualizações: `start/restart/apply` sem pull; `update` deliberado com validação, smoke test e tentativa de rollback.
 
 ## Fases
 
-- [x] 1. Pesquisa e escolha do runtime/hardware oficial.
-- [x] 2. Definir arquitetura mínima e superfície de API.
-- [x] 3. Criar pré-validação de GPU, VRAM, disco e Docker.
-- [x] 4. Criar instalador idempotente para Ubuntu.
-- [x] 5. Criar Docker Compose para vLLM + gateway restritivo.
-- [x] 6. Criar health check, teste de inferência e comandos operacionais.
-- [x] 7. Criar CI estática para scripts/YAML.
-- [x] 8. Auditoria pré-VM contra vLLM, Docker, NVIDIA e Azure; corrigir falhas detectáveis sem hardware.
-- [ ] 9. Executar teste real em uma Azure H200 e ajustar qualquer incompatibilidade observada em runtime.
-- [ ] 10. Congelar uma versão/tag depois do primeiro teste real bem-sucedido.
+- [x] 1. Pesquisa e escolha de runtime/hardware.
+- [x] 2. Arquitetura mínima e superfície OpenAI.
+- [x] 3. Preflight de GPU, VRAM, parâmetros, Docker e espaço agregado.
+- [x] 4. Instalador idempotente para Ubuntu HPC.
+- [x] 5. Compose vLLM + gateway restritivo.
+- [x] 6. Health, chat, tool calling e comandos operacionais.
+- [x] 7. Segurança: bind local, gateway, SSRF/media allowlist, logs limitados.
+- [x] 8. Persistência de pesos e cache vLLM.
+- [x] 9. `glm-info` global + diagnóstico sem segredos.
+- [x] 10. CI: Bash, ShellCheck, Compose, Nginx e regressão do symlink global.
+- [x] 11. Fluxo de update validado antes/depois com rollback da imagem vLLM.
+- [x] 12. Suporte a `MODEL_REVISION` para pinagem futura.
+- [ ] 13. Teste real em Azure 8× H200: carregar FP8 e executar smoke test completo.
+- [ ] 14. Reboot/Spot e reaproveitamento de caches.
+- [ ] 15. Congelar digest, commit do checkpoint e versões após o primeiro teste bem-sucedido.
 
-## Critérios de pronto
+## Critérios de pronto na VM real
 
-1. `nvidia-smi` enxerga 8 GPUs adequadas.
-2. A imagem vLLM consegue inicializar `torch.cuda` e enxergar as 8 GPUs.
-3. `docker compose up -d` sobe vLLM e gateway.
-4. `/v1/models` rejeita chamada sem chave e responde com chave.
-5. `/v1/chat/completions` produz resposta do GLM-5.3-Flash.
-6. `/invocations` recebe 404 no gateway.
-7. Alterações no `.env` são aplicadas por `./manage.sh restart`.
-8. Após reboot, os containers retornam automaticamente.
+1. `nvidia-smi` vê as 8 H200.
+2. A imagem vLLM vê 8 GPUs e FlashInfer compatível.
+3. O checkpoint configurado em `MODEL_REVISION` carrega integralmente.
+4. `/v1/models` exige chave e responde autenticado.
+5. `/v1/chat/completions` gera conteúdo válido.
+6. Tool calling nomeado retorna `tool_calls` + arguments JSON válido.
+7. `/invocations` recebe 404 no gateway.
+8. `glm-info` funciona de qualquer pasta.
+9. `restart/apply` não troca imagem silenciosamente.
+10. `update` aceita uma versão somente após health + smoke test.
+11. Reboot retorna os containers e preserva os caches.
+12. Digest/revisão final ficam registrados para reprodução.

@@ -24,6 +24,10 @@ services:
               capabilities: [gpu]
     command:
       - "${MODEL_ID:-zai-org/GLM-5.3-Flash}"
+      - --revision
+      - "${MODEL_REVISION:-main}"
+      - --tokenizer-revision
+      - "${MODEL_REVISION:-main}"
       - --tensor-parallel-size
       - "${TENSOR_PARALLEL_SIZE:-8}"
       - --max-model-len

@@ -31,6 +31,7 @@ done
 (( EXPECTED_GPUS >= TP_SIZE )) || die "EXPECTED_GPUS não pode ser menor que TENSOR_PARALLEL_SIZE."
 
 [[ -n "${MODEL_ID:-}" ]] || die "MODEL_ID não pode ficar vazio."
+[[ -n "${MODEL_REVISION:-}" ]] || die "MODEL_REVISION não pode ficar vazio. Use main antes do primeiro pin ou um commit/tag validado."
 [[ -n "${SERVED_MODEL_NAME:-}" ]] || die "SERVED_MODEL_NAME não pode ficar vazio."
 [[ -n "${VLLM_IMAGE:-}" ]] || die "VLLM_IMAGE não pode ficar vazio."
 [[ -n "${API_KEY:-}" && "${API_KEY}" != "CHANGE_ME" ]] || die "API_KEY ausente ou ainda definida como CHANGE_ME."
@@ -60,7 +61,6 @@ mkdir -p "$HF_CACHE_PATH" "$VLLM_CACHE_PATH" || die "Não foi possível criar os
 DOCKER_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
 [[ -n "$DOCKER_ROOT" ]] || die "Não foi possível descobrir DockerRootDir."
 
-# Soma os requisitos quando cache do modelo, cache vLLM e Docker compartilham o mesmo filesystem.
 declare -A REQUIRED_GIB=()
 declare -A FREE_GIB=()
 declare -A FS_LABELS=()

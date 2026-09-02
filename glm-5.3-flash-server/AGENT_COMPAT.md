@@ -1,10 +1,10 @@
 # Compatibilidade com agentes
 
-Este servidor expõe o GLM-5.3-Flash em formato OpenAI, mas o suporte upstream ainda está mudando rapidamente. Para agentes com tool calling, aplique estas regras no cliente.
+Este servidor expõe o GLM-5.3-Flash no formato OpenAI. Como o suporte upstream ainda evolui, aplique estas regras nos agentes clientes.
 
 ## 1. `assistant.content=null` + `tool_calls`
 
-Clientes OpenAI frequentemente armazenam uma resposta de ferramenta assim:
+Clientes OpenAI podem armazenar uma resposta de ferramenta assim:
 
 ```json
 {
@@ -14,9 +14,9 @@ Clientes OpenAI frequentemente armazenam uma resposta de ferramenta assim:
 }
 ```
 
-Há um bug upstream aberto em que `content: null` pode virar o texto literal `None` ao passar pelo chat template do GLM. Em sessões longas isso pode degradar o contexto.
+O problema foi reportado em `vllm-project/vllm#54337`: determinados templates GLM podem renderizar `None` literalmente no contexto, degradando sessões longas com ferramentas. A issue está marcada como encerrada, porém a PR protocolar proposta para normalizar `null` (`#54368`) continua aberta/não incorporada no momento desta revisão.
 
-Até a correção upstream entrar na imagem validada, normalize para string vazia antes de reenviar o histórico:
+Portanto, até confirmar a versão efetivamente presente na imagem validada da sua VPS, normalize no cliente:
 
 ```python
 def normalize_glm_messages(messages):
@@ -33,28 +33,37 @@ def normalize_glm_messages(messages):
     return normalized
 ```
 
-Use essa função antes de cada requisição que reenvia um histórico com tool calls.
-
-Issue/PR upstream:
+Referências:
 - https://github.com/vllm-project/vllm/issues/54337
 - https://github.com/vllm-project/vllm/pull/54368
 
-## 2. Controle de raciocínio do GLM-5.3
+## 2. Raciocínio do GLM-5.3
 
 Use:
 
-- `reasoning_effort`: `low`, `high` ou `max`.
-- `chat_template_kwargs.clear_thinking=true` para cenários normais de chat/histórico.
+- `reasoning_effort`: `low`, `high` ou `max`;
+- `chat_template_kwargs.clear_thinking=true` quando estiver reenviando histórico de chat.
 
-Evite enviar as flags antigas `enable_thinking` ou `thinking` para tentar desligar o raciocínio. Há um bug upstream recente em que essas flags podem fazer o parser parar de separar o raciocínio mesmo enquanto o template continua gerando-o, causando vazamento do scratchpad no campo de conteúdo.
+Evite `enable_thinking=false` e `thinking=false`. A issue `#54744` continua aberta: no GLM-5.3 essas flags antigas podem desligar a extração do parser sem desligar o thinking do template, fazendo scratchpad/`</think>` aparecerem em `message.content`.
 
-Issue:
+Referência:
 - https://github.com/vllm-project/vllm/issues/54744
 
-## 3. Mídia remota
+## 3. Tool calling
 
-URLs remotas ficam bloqueadas no servidor por padrão. Se o agente precisar de mídia por URL, abra somente um domínio confiável em `ALLOWED_MEDIA_DOMAIN` no `.env`.
+O servidor é iniciado com:
 
-## 4. Após o primeiro teste H200
+- `--tool-call-parser glm47`;
+- `--enable-auto-tool-choice`.
 
-Depois de confirmar o servidor na Azure, congele o digest da imagem/revisão do modelo. Quando uma correção upstream importante para agentes for incorporada, atualize em uma bateria controlada e rode novamente os smoke tests.
+O `./manage.sh test` força também uma chamada de função nomeada e valida `tool_calls` + `arguments` JSON. Isso deve ser executado sempre depois de atualizar a imagem vLLM.
+
+Para workflows críticos, prefira ferramenta nomeada/required quando você precisa garantir a estrutura da chamada, em vez de depender sempre de `auto`.
+
+## 4. Mídia remota
+
+URLs remotas ficam bloqueadas por padrão. Se um agente precisar receber imagem/vídeo/áudio por URL, libere apenas um domínio confiável em `ALLOWED_MEDIA_DOMAIN`; redirects continuam desligados por padrão.
+
+## 5. Depois do primeiro teste H200
+
+Após confirmar carregamento + chat + tool calling em H200, congele o digest da imagem e `MODEL_REVISION` no commit exato do checkpoint validado. Só troque um deles em uma atualização controlada e repita o smoke test completo.

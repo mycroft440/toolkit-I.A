@@ -4,106 +4,90 @@ Data da revisão: 2026-09-02.
 
 ## Resultado
 
-Para a primeira implantação, a combinação de menor atrito continua sendo **Azure ND-H200-v5 + Ubuntu HPC 24.04 + Docker + imagem especial do vLLM para GLM-5.3-Flash**. O objetivo é confiabilidade de bootstrap, não throughput máximo.
+A combinação de menor atrito para a primeira implantação continua sendo **Azure ND-H200-v5 + Ubuntu HPC 24.04 + Docker + imagem especial do vLLM para GLM-5.3-Flash**. A meta é previsibilidade de bootstrap, não throughput máximo.
 
-## Modelo
+## Modelo e runtime
 
 - `zai-org/GLM-5.3-Flash`: ~321B parâmetros totais / 18B ativos.
-- checkpoint padrão FP8: ~306 GiB antes de overhead.
+- checkpoint padrão nativo FP8: cerca de 306 GiB de pesos antes de runtime/KV.
 - contexto declarado: até 1.048.576 tokens.
-- perfil inicial deste projeto: 262.144 tokens.
-
-## Runtime escolhido: vLLM
-
-A receita atual usa:
-
-`vllm/vllm-openai:glm53-flash`
-
-com H200, TP=8, parser de tools `glm47`, parser de reasoning `glm45` e `--no-enable-flashinfer-autotune`.
-
-Não trocamos automaticamente para `latest`, porque o suporte do GLM-5.3-Flash depende de componentes recentes específicos.
-
-## FlashInfer
-
-A receita lista **FlashInfer 0.6.17+** como pré-requisito para NoPE Sparse MLA. A mesma página recomenda verificar **0.6.18+** especificamente ao diagnosticar erro de inicialização Sparse-MLA.
-
-Conclusão operacional:
-
-- o instalador rejeita imagem com FlashInfer <0.6.17;
-- mantém a imagem especial indicada pela receita;
-- se a Azure apresentar erro Sparse-MLA com 0.6.17, o diagnóstico deve registrar a versão e então avaliamos uma imagem mais nova de forma controlada, em vez de trocar silenciosamente antes do teste.
+- perfil inicial: 262.144 tokens.
+- imagem: `vllm/vllm-openai:glm53-flash`.
+- H200: TP=8, `glm47` para tools, `glm45` para reasoning, `--no-enable-flashinfer-autotune`.
+- Hopper não deve forçar FP8 KV para este modelo; o perfil usa o comportamento BF16 KV.
 
 Fonte: https://recipes.vllm.ai/zai-org/GLM-5.3-Flash
 
-## Docker e Azure HPC
+## FlashInfer
 
-As imagens Azure HPC atuais já podem trazer Moby/Docker. Substituir esse stack por Docker CE sem necessidade cria risco de conflito de pacotes.
+A receita lista FlashInfer 0.6.17+ para NoPE Sparse MLA; troubleshooting recomenda verificar 0.6.18+ se ocorrer o erro específico de inicialização Sparse-MLA. O bootstrap rejeita <0.6.17 e `diagnose` mostra a versão efetiva.
 
-O instalador agora:
+## Reprodutibilidade do modelo
 
-1. reutiliza Docker existente se funcional;
-2. instala Docker CE só quando `docker` não existe;
-3. se falta apenas Compose v2, tenta o pacote da distribuição;
-4. se necessário, baixa o binário oficial do Docker Compose e confere SHA-256.
+vLLM suporta `--revision` e `--tokenizer-revision` com branch, tag ou commit. O projeto usa:
 
-## Persistência
+```bash
+MODEL_REVISION=main
+```
 
-Persistir somente os pesos não é suficiente para reinícios rápidos. A documentação do vLLM recomenda persistir também `~/.cache/vllm`, onde ficam artefatos de torch.compile/Inductor/Triton.
+antes do primeiro H200. O mesmo valor é passado ao modelo e tokenizer. Depois do primeiro smoke test real, a revisão deve ser trocada pelo commit exato que funcionou.
 
-Por isso há dois diretórios separados:
+Fonte: https://docs.vllm.ai/en/latest/cli/serve/
 
-- `HF_CACHE_DIR`
-- `VLLM_CACHE_DIR`
+## Docker / Azure HPC
 
-Fonte: https://docs.vllm.ai/en/latest/deployment/docker/
+Azure HPC pode trazer Moby/Docker. Substituir um stack funcional por Docker CE cria risco desnecessário, então o instalador reutiliza Docker existente e só instala o que falta. O fallback do plugin Compose usa release oficial e verifica SHA-256.
+
+Operações normais (`start/restart/apply`) usam `--pull never`; somente `update` faz pull deliberado. Reexecutar `install.sh` usa política `missing`, preservando tags já presentes.
+
+## Armazenamento
+
+Há três consumidores relevantes:
+
+- pesos/cache Hugging Face: reserva padrão 420 GiB livres;
+- Docker: 80 GiB;
+- cache vLLM/torch.compile: 20 GiB.
+
+O preflight agrupa por filesystem. Se os três estiverem no mesmo disco, exige **520 GiB livres**. Para Azure/Spot, 1 TiB persistente oferece margem mais segura e evita depender de armazenamento temporário para o checkpoint.
 
 ## Segurança / SSRF
 
-A documentação do vLLM recomenda `--allowed-media-domains` porque URLs de mídia sem allowlist podem atingir serviços internos e metadados de cloud. Também recomenda `VLLM_MEDIA_URL_ALLOW_REDIRECTS=0`.
-
-O projeto agora bloqueia URLs remotas por padrão com um domínio inválido (`media.invalid`) e redirects desligados. O operador só abre um domínio deliberadamente.
+URLs remotas de mídia ficam bloqueadas por `ALLOWED_MEDIA_DOMAIN=media.invalid`; redirects ficam desligados. O vLLM não publica porta diretamente e o Nginx expõe somente `/v1/`.
 
 Fonte: https://docs.vllm.ai/en/latest/usage/security/
 
-## Azure
+## Atualização controlada
 
-Perfil:
+O fluxo de `./manage.sh update` foi desenhado para reduzir quebra por tags mutáveis:
 
-- `Standard_ND96isr_H200_v5`
-- 8× H200 de 141 GB
-- 1.128 GB de memória de acelerador total
-- NVLink
-- Ubuntu HPC 24.04
+1. validar GPUs, configuração e espaço antes do download;
+2. guardar ID da imagem vLLM atual;
+3. puxar somente o serviço vLLM;
+4. validar CUDA, vLLM e FlashInfer na imagem nova;
+5. recriar com `--pull never`;
+6. esperar `/v1/models`;
+7. rodar chat + tool calling;
+8. em falha, tentar restaurar a imagem anterior.
 
-Referências:
-- https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nd-h200-v5-series
-- https://learn.microsoft.com/azure/virtual-machines/azure-hpc-vm-images
+Se `VLLM_IMAGE` estiver pinada por digest, a atualização automática é recusada.
 
-## Atualizações upstream e pinagem
+## Issues recentes
 
-GLM-5.3-Flash é recente e checkpoint/imagem ainda recebem correções. Pinagem prematura pode congelar um bug.
+Triagem de setembro/2026 encontrou problemas em B200/GB200, Ada, ROCm, DBO, DCP, MTP e KV offloading. O perfil inicial H200/TP8 evita esses caminhos.
 
-Estratégia:
+Dois problemas afetam clientes/agentes independentemente de GPU:
 
-1. seguir a imagem especial oficial até o primeiro boot H200 bem-sucedido;
-2. rodar `./manage.sh diagnose`;
-3. registrar digest da imagem e versões;
-4. registrar revisão exata do checkpoint baixado;
-5. só então congelar uma configuração reproduzível.
+- `#54337`: `assistant.content=null + tool_calls`; issue fechada, porém PR proposta `#54368` ainda aberta/não mesclada nesta revisão. Workaround no cliente continua recomendado até verificar a imagem real.
+- `#54744`: flags antigas `enable_thinking/thinking=false` podem fazer reasoning vazar em `content`; issue segue aberta. Use `reasoning_effort` + `clear_thinking`.
 
-## O que testar na Azure
+## Teste final na Azure
 
-- 8 GPUs no host e no container;
-- versão do driver;
-- vLLM e FlashInfer;
+Ainda precisa ser feito com hardware real:
+
+- 8 H200 no host/container;
 - carregamento integral do FP8;
-- `/v1/models` autenticado;
-- rejeição sem chave;
-- bloqueio de `/invocations`;
-- chat `reasoning_effort=low`;
-- chat `reasoning_effort=max`;
-- tool calling;
-- bloqueio de URL remota não permitida;
-- reboot/recriação com reaproveitamento dos dois caches;
-- crescimento progressivo do contexto até 262.144 tokens;
-- coleta do digest/revisão para pinagem.
+- chat low/max;
+- tool calling nomeado e auto;
+- contexto crescente até 262.144;
+- reboot/Spot + reutilização dos caches;
+- captura do digest/revisão para pinagem.
