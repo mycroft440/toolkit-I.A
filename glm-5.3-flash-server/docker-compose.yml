@@ -7,7 +7,7 @@ services:
     ipc: host
     environment:
       HF_HOME: /root/.cache/huggingface
-      HUGGING_FACE_HUB_TOKEN: "${HF_TOKEN:-}"
+      HF_TOKEN: "${HF_TOKEN:-}"
       VLLM_API_KEY: "${API_KEY}"
       VLLM_ENGINE_READY_TIMEOUT_S: "${VLLM_ENGINE_READY_TIMEOUT_S:-3600}"
     volumes:

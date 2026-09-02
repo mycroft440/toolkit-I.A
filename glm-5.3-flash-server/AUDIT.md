@@ -22,6 +22,8 @@ Revisão do bootstrap Azure, Docker/Compose, runtime NVIDIA, vLLM, gateway, smok
 6. **Endpoint operacional extra no Nginx:** `/healthz` não era necessário e contrariava a política de publicar somente `/v1/`. Foi removido.
 7. **Smoke test incompleto:** agora valida autenticação sem chave, bloqueio de `/invocations`, `/v1/models` autenticado e geração de chat.
 8. **CI sem execução manual e sem validar Nginx:** adicionados `workflow_dispatch` e `nginx -t`.
+9. **Variável Hugging Face antiga:** o container recebia `HUGGING_FACE_HUB_TOKEN`, atualmente deprecated. Foi substituída por `HF_TOKEN`.
+10. **Reinstalação parcial do NVIDIA Toolkit:** a gravação do keyring podia pedir confirmação se o arquivo já existisse. O `gpg` agora usa `--batch --yes`, mantendo o bootstrap não interativo.
 
 ## Decisões mantidas
 
@@ -29,6 +31,10 @@ Revisão do bootstrap Azure, Docker/Compose, runtime NVIDIA, vLLM, gateway, smok
 - Sem MTP, DBO ou FP8 KV na primeira implantação H200.
 - Bind local (`127.0.0.1`) por padrão.
 - `privileged` + `ipc: host`, porque a receita oficial atual do vLLM usa esses parâmetros no caminho Docker H200.
+
+## Validação automatizada
+
+O GitHub Actions valida sintaxe Bash, ShellCheck, resolução do Docker Compose e sintaxe do Nginx. A primeira execução da auditoria detectou anotações incompletas de `source` no ShellCheck; elas foram corrigidas e a execução seguinte passou em todas as etapas estáticas.
 
 ## Risco residual
 
@@ -40,6 +46,8 @@ O suporte do GLM-5.3-Flash no vLLM é recente e ainda existem issues abertas em 
 - https://huggingface.co/zai-org/GLM-5.3-Flash
 - https://docs.vllm.ai/en/latest/usage/security/
 - https://docs.docker.com/compose/how-tos/gpu-support/
+- https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+- https://huggingface.co/docs/huggingface_hub/main/package_reference/environment_variables
 - https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nd-h200-v5-series
 - https://learn.microsoft.com/azure/virtual-machines/azure-hpc-vm-images
 - https://github.com/Azure/azhpc-images/releases
