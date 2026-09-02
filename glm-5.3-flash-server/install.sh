@@ -99,8 +99,11 @@ if [[ "$OWNER_USER" != "root" ]]; then
   usermod -aG docker "$OWNER_USER" || true
 fi
 
+set -a
+# .env é gerado localmente pelo instalador e é deliberadamente interpretado como shell env.
 # shellcheck disable=SC1091
-set -a; source .env; set +a
+source .env
+set +a
 mkdir -p "${HF_CACHE_DIR:-/var/lib/glm53/huggingface}"
 chmod 700 "${HF_CACHE_DIR:-/var/lib/glm53/huggingface}"
 
