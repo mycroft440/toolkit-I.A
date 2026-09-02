@@ -127,6 +127,10 @@ if [[ "$OWNER_USER" != "root" ]]; then
   usermod -aG docker "$OWNER_USER" || true
 fi
 
+# Atalhos de informações da API.
+chmod 0755 "$ROOT_DIR/info"
+ln -sfn "$ROOT_DIR/info" /usr/local/bin/glm-info
+
 set -a
 # shellcheck disable=SC1091
 source .env
@@ -159,7 +163,14 @@ Instalação iniciada com sucesso.
 A primeira inicialização precisa baixar o checkpoint do GLM-5.3-Flash para:
   ${HF_CACHE_PATH}
 
-Comandos úteis:
+Para ver todas as informações da API a qualquer momento:
+  glm-info
+
+Ou dentro desta pasta:
+  ./info
+  ./manage.sh info
+
+Outros comandos úteis:
   ./manage.sh status
   ./manage.sh logs
   ./manage.sh wait
@@ -170,7 +181,7 @@ Comandos úteis:
 Endpoint no host:
   http://${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}/v1
 
-A API key foi salva em .env (permissão 600) e não é exibida automaticamente.
+A API key foi salva em .env (permissão 600) e não é exibida automaticamente na instalação.
 URLs remotas de mídia ficam bloqueadas por padrão; veja SECURITY.md para liberar somente domínios confiáveis.
 Por segurança, o padrão escuta apenas em 127.0.0.1. Para agentes remotos, leia SECURITY.md antes de alterar BIND_ADDRESS.
 MSG
